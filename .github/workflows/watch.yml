@@ -1,14 +1,14 @@
 name: TNP Watcher
 
 # Triggered by cron-jobs.org via a repository_dispatch webhook (reliable timing),
-# plus a manual "Run workflow" button, plus a slow backup schedule in case the
-# external cron is ever down.
+# plus a manual "Run workflow" button.
+# NOTE: the built-in `schedule:` trigger was removed to avoid double-running
+# (and burning ~2x GitHub Actions minutes). If cron-jobs.org is ever retired,
+# re-add a `schedule:` block here as a fallback.
 on:
   repository_dispatch:
     types: [tnp-check]
   workflow_dispatch:
-  schedule:
-    - cron: "*/30 * * * *"   # backup only; GitHub's scheduler is often late
 
 # Prevent overlapping runs from racing on state.json.
 concurrency:
