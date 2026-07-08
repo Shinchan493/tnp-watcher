@@ -1,0 +1,16 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local debug artifacts from `--dump`
+dump_*.html
+dump_login_response.html
+cookies.txt
+
+# NOTE: state.json is intentionally NOT ignored.
+# The GitHub Action commits it back so the watcher remembers seen postings.

@@ -1,0 +1,55 @@
+name: TNP Watcher
+
+# Triggered by cron-jobs.org via a repository_dispatch webhook (reliable timing),
+# plus a manual "Run workflow" button, plus a slow backup schedule in case the
+# external cron is ever down.
+on:
+  repository_dispatch:
+    types: [tnp-check]
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"   # backup only; GitHub's scheduler is often late
+
+# Prevent overlapping runs from racing on state.json.
+concurrency:
+  group: tnp-watcher
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # needed to commit the updated state.json
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run watcher
+        env:
+          TNP_USERNAME: ${{ secrets.TNP_USERNAME }}
+          TNP_PASSWORD: ${{ secrets.TNP_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python watcher.py
+
+      - name: Commit updated state
+        run: |
+          git config user.name  "tnp-watcher-bot"
+          git config user.email "actions@github.com"
+          git add state.json
+          if git diff --cached --quiet; then
+            echo "No state change."
+          else
+            git commit -m "Update seen-postings state [skip ci]"
+            git push
+          fi
