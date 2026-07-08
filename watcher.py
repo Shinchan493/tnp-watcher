@@ -262,14 +262,19 @@ def parse_newsevents(html: str) -> list[dict]:
     body = table.find("tbody") or table
     for row in body.find_all("tr"):
         cells = row.find_all("td")
-        if len(cells) < 2:
-            continue
+        if not cells:
+            continue  # header/separator row only
+        # Be maximally inclusive: capture every row that has ANY text, whatever
+        # its shape. First cell is the notification text, second (if any) is the
+        # post date; fall back to the whole row's text so nothing is ever missed.
         info = cells[0].get_text(" ", strip=True)
-        date = cells[1].get_text(" ", strip=True)
+        date = cells[1].get_text(" ", strip=True) if len(cells) > 1 else ""
         if not info:
-            continue
+            info = row.get_text(" ", strip=True)
+        if not info:
+            continue  # genuinely empty row
 
-        link = cells[0].find("a", href=True)
+        link = row.find("a", href=True)
         href = link["href"] if link else ""
         uid = _text_hash(info + "|" + date)  # per-notification, not per-job
         if uid in seen:
