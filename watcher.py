@@ -21,6 +21,7 @@ import re
 import sys
 import json
 import time
+import hashlib
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -243,8 +244,13 @@ def parse_newsevents(html: str) -> list[dict]:
     Extract notifications from the /newsevents table.
 
     Table markup (id="newsevents"):  Info | Post Date
-    The Info cell links to job/notice/<hash>; that hash (or a hash of the text)
-    is the stable per-notification id.
+
+    IMPORTANT: the Info cell links to job/notice/<hash>, but that hash is the
+    *company job's* id, shared by ALL of that company's notifications (shortlist,
+    interview, result, ...). It therefore CANNOT identify a single notification.
+    We key each notification on its own content (info text + post date), which
+    each carry a distinct timestamp — otherwise new updates for a company already
+    seen would be silently deduped away.
     """
     soup = BeautifulSoup(html, "html.parser")
     table = soup.find(id="newsevents")
@@ -265,8 +271,7 @@ def parse_newsevents(html: str) -> list[dict]:
 
         link = cells[0].find("a", href=True)
         href = link["href"] if link else ""
-        m = re.search(r"job/notice/([0-9a-f]{16,})", href)
-        uid = m.group(1) if m else _text_hash(info + "|" + date)
+        uid = _text_hash(info + "|" + date)  # per-notification, not per-job
         if uid in seen:
             continue
         seen.add(uid)
@@ -283,7 +288,6 @@ def parse_newsevents(html: str) -> list[dict]:
 
 
 def _text_hash(value: str) -> str:
-    import hashlib
     return hashlib.sha1(value.encode("utf-8", "ignore")).hexdigest()[:16]
 
 
