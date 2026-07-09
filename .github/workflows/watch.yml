@@ -43,6 +43,7 @@ jobs:
         run: python watcher.py
 
       - name: Commit updated state
+        if: always()   # persist partial progress even if some sends failed (watcher exits non-zero)
         run: |
           git config user.name  "tnp-watcher-bot"
           git config user.email "actions@github.com"

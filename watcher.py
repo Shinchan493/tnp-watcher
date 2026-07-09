@@ -323,23 +323,48 @@ def save_state(state: dict) -> None:
 # --------------------------------------------------------------------------- #
 # Telegram delivery
 # --------------------------------------------------------------------------- #
-def notify(text: str) -> None:
+def notify(text: str) -> bool:
+    """Send one Telegram message. Returns True only if it was actually delivered.
+
+    Handles the group→supergroup migration transparently: when a basic group is
+    upgraded, Telegram rejects the old chat id with a 400 that carries the NEW id
+    in `parameters.migrate_to_chat_id`. We follow it once and update the id for
+    the rest of this run so later messages go straight through. (Persisting the
+    new id is still worth doing — see the printed NOTE — so future runs skip the
+    retry.)
+    """
+    global TELEGRAM_CHAT
     if not (TELEGRAM_TOKEN and TELEGRAM_CHAT):
         print("WARN: Telegram not configured; printing instead:\n", text)
-        return
+        return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT,
-        "text": text,
-        "disable_web_page_preview": True,
-    }
-    try:
-        r = requests.post(url, json=payload, timeout=30)
-        if r.status_code != 200:
-            print(f"WARN: Telegram returned {r.status_code}: {r.text[:200]}")
-    except requests.RequestException as e:
-        print(f"WARN: Telegram request failed: {e}")
-    time.sleep(1)  # stay under Telegram's ~30 msg/sec limit with margin
+    for attempt in range(2):
+        payload = {
+            "chat_id": TELEGRAM_CHAT,
+            "text": text,
+            "disable_web_page_preview": True,
+        }
+        try:
+            r = requests.post(url, json=payload, timeout=30)
+        except requests.RequestException as e:
+            print(f"WARN: Telegram request failed: {e}")
+            return False
+        if r.status_code == 200:
+            time.sleep(1)  # stay under Telegram's ~30 msg/sec limit with margin
+            return True
+        try:
+            body = r.json()
+        except ValueError:
+            body = {}
+        migrate = (body.get("parameters") or {}).get("migrate_to_chat_id")
+        if migrate and attempt == 0:
+            print(f"NOTE: chat migrated to supergroup {migrate}; retrying. "
+                  f"Update TELEGRAM_CHAT_ID to {migrate} to skip this next time.")
+            TELEGRAM_CHAT = str(migrate)
+            continue
+        print(f"WARN: Telegram returned {r.status_code}: {r.text[:200]}")
+        return False
+    return False
 
 
 def show_chat_id() -> None:
@@ -443,12 +468,27 @@ def run(seed_only: bool = False) -> None:
 
     print(f"{len(new_items)} new item(s) found.")
     # Notify oldest→newest so messages arrive in chronological order.
+    delivered: list[str] = []
+    failed = 0
     for it in reversed(new_items):
         print(" ->", it["title"][:80])
-        notify(_format(it))
+        if notify(_format(it)):
+            delivered.append(it["id"])
+        else:
+            failed += 1
 
-    # Persist the union so we never re-alert.
-    save_state({"seen": list(seen.union(current_ids))})
+    # Persist ONLY what we actually delivered. If Telegram delivery is broken
+    # (bad chat id, bot lacks post rights, network), we must NOT mark undelivered
+    # items as "seen" — otherwise they're lost forever once delivery is restored.
+    # We also keep every current job/news id we DID see AND could deliver, plus
+    # the prior baseline, so we never re-alert on things already sent.
+    save_state({"seen": list(seen.union(delivered))})
+
+    if failed:
+        # Exit non-zero so a delivery outage shows up as a red run in CI instead
+        # of silently passing — and so the items are retried on the next run.
+        sys.exit(f"ERROR: {failed} of {len(new_items)} message(s) failed to send. "
+                 "Nothing was marked seen for those; they will retry next run.")
 
 
 def dump() -> None:
